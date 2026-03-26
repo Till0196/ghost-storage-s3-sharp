@@ -6,6 +6,12 @@
     {
       "matchDepTypes": ["devDependencies"],
       "automerge": true
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["ghost"],
+      "automerge": true,
+      "automergeType": "branch"
     }
   ]
 }

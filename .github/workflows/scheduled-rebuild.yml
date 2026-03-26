@@ -1,0 +1,53 @@
+name: scheduled rebuild
+run-name: scheduled rebuild - ${{ github.event_name }}
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'  # 毎週月曜 03:00 UTC
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check-and-rebuild:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.check.outputs.updated }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check ghost base image digest
+        id: check
+        run: |
+          CURRENT=$(docker buildx imagetools inspect ghost:6-alpine --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')
+          CACHED=$(gh api "repos/${{ github.repository }}/actions/variables/GHOST_BASE_DIGEST" --jq '.value' 2>/dev/null || echo "")
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          if [ "$CURRENT" != "$CACHED" ]; then
+            echo "updated=true" >> $GITHUB_OUTPUT
+            echo "Ghost base image updated: $CACHED -> $CURRENT"
+          else
+            echo "updated=false" >> $GITHUB_OUTPUT
+            echo "Ghost base image unchanged: $CURRENT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update cached digest
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          gh api --method PATCH "repos/${{ github.repository }}/actions/variables/GHOST_BASE_DIGEST" \
+            -f name=GHOST_BASE_DIGEST \
+            -f value="${{ steps.check.outputs.current }}" 2>/dev/null || \
+          gh api --method POST "repos/${{ github.repository }}/actions/variables" \
+            -f name=GHOST_BASE_DIGEST \
+            -f value="${{ steps.check.outputs.current }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: check-and-rebuild
+    if: needs.check-and-rebuild.outputs.updated == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/build.yml
