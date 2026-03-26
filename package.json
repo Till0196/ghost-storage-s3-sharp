@@ -1,0 +1,25 @@
+{
+  "name": "ghost-storage-r2",
+  "version": "1.0.0",
+  "description": "Ghost storage adapter for Cloudflare R2 with Sharp image optimization",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1017.0",
+    "ghost-storage-base": "^1.1.2",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3"
+  }
+}
