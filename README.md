@@ -19,7 +19,7 @@ Copy the module into your Ghost installation:
 Or use the provided Docker image which bundles it with Ghost:
 
 ```
-ghcr.io/<your-org>/ghost-storage-s3-sharp:latest
+ghcr.io/till0196/ghost-storage-s3-sharp:latest
 ```
 
 ## Configuration
