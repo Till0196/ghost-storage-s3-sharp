@@ -77,11 +77,16 @@ GHOST_STORAGE_S3_SIZES=800,1600
 
 ```json
 {
-  "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
-  "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  "bucket": "my-ghost-bucket",
-  "region": "ap-northeast-1",
-  "cdnUrl": "https://my-ghost-bucket.s3.ap-northeast-1.amazonaws.com"
+  "storage": {
+    "active": "ghost-storage-s3-sharp",
+    "ghost-storage-s3-sharp": {
+      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "bucket": "my-ghost-bucket",
+      "region": "ap-northeast-1",
+      "cdnUrl": "https://my-ghost-bucket.s3.ap-northeast-1.amazonaws.com"
+    }
+  }
 }
 ```
 
@@ -91,13 +96,18 @@ R2 does not support CRC32/CRC64-NVME checksums. Set `checksumMode: "when_require
 
 ```json
 {
-  "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
-  "accessKeyId": "your-r2-access-key",
-  "secretAccessKey": "your-r2-secret-key",
-  "bucket": "my-ghost-bucket",
-  "region": "auto",
-  "checksumMode": "when_required",
-  "cdnUrl": "https://cdn.example.com"
+  "storage": {
+    "active": "ghost-storage-s3-sharp",
+    "ghost-storage-s3-sharp": {
+      "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
+      "accessKeyId": "your-r2-access-key",
+      "secretAccessKey": "your-r2-secret-key",
+      "bucket": "my-ghost-bucket",
+      "region": "auto",
+      "checksumMode": "when_required",
+      "cdnUrl": "https://cdn.example.com"
+    }
+  }
 }
 ```
 
@@ -105,12 +115,17 @@ R2 does not support CRC32/CRC64-NVME checksums. Set `checksumMode: "when_require
 
 ```json
 {
-  "endpoint": "https://minio.example.com",
-  "accessKeyId": "your-minio-access-key",
-  "secretAccessKey": "your-minio-secret-key",
-  "bucket": "my-ghost-bucket",
-  "region": "us-east-1",
-  "cdnUrl": "https://minio.example.com/my-ghost-bucket"
+  "storage": {
+    "active": "ghost-storage-s3-sharp",
+    "ghost-storage-s3-sharp": {
+      "endpoint": "https://minio.example.com",
+      "accessKeyId": "your-minio-access-key",
+      "secretAccessKey": "your-minio-secret-key",
+      "bucket": "my-ghost-bucket",
+      "region": "us-east-1",
+      "cdnUrl": "https://minio.example.com/my-ghost-bucket"
+    }
+  }
 }
 ```
 
