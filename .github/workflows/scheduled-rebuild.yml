@@ -16,38 +16,36 @@ jobs:
     outputs:
       updated: ${{ steps.check.outputs.updated }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Get current Ghost base image digest
+        id: digest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect ghost:6-alpine --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "value=$DIGEST" >> $GITHUB_OUTPUT
 
-      - name: Check ghost base image digest
+      - name: Check digest cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ghost-digest
+          key: ghost-base-${{ steps.digest.outputs.value }}
+          restore-keys: ghost-base-
+
+      - name: Determine if rebuild needed
         id: check
         run: |
-          CURRENT=$(docker buildx imagetools inspect ghost:6-alpine --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')
-          CACHED=$(gh api "repos/${{ github.repository }}/actions/variables/GHOST_BASE_DIGEST" --jq '.value' 2>/dev/null || echo "")
-          echo "current=$CURRENT" >> $GITHUB_OUTPUT
-          if [ "$CURRENT" != "$CACHED" ]; then
-            echo "updated=true" >> $GITHUB_OUTPUT
-            echo "Ghost base image updated: $CACHED -> $CURRENT"
-          else
+          if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
             echo "updated=false" >> $GITHUB_OUTPUT
-            echo "Ghost base image unchanged: $CURRENT"
+            echo "Ghost base image unchanged: ${{ steps.digest.outputs.value }}"
+          else
+            echo "updated=true" >> $GITHUB_OUTPUT
+            echo "Ghost base image updated: ${{ steps.digest.outputs.value }}"
+            echo "${{ steps.digest.outputs.value }}" > /tmp/ghost-digest
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update cached digest
-        if: steps.check.outputs.updated == 'true'
-        run: |
-          gh api --method PATCH "repos/${{ github.repository }}/actions/variables/GHOST_BASE_DIGEST" \
-            -f name=GHOST_BASE_DIGEST \
-            -f value="${{ steps.check.outputs.current }}" 2>/dev/null || \
-          gh api --method POST "repos/${{ github.repository }}/actions/variables" \
-            -f name=GHOST_BASE_DIGEST \
-            -f value="${{ steps.check.outputs.current }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     needs: check-and-rebuild
     if: needs.check-and-rebuild.outputs.updated == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      packages: write
