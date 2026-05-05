@@ -31,9 +31,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Get Node version from Ghost image
+      - name: Get Node version from Ghost Dockerfile
         run: |
-          NODE_VERSION=$(docker run --rm ghost:6-alpine node --version | cut -dv -f2 | cut -d. -f1)
+          GHOST_MAJOR=$(grep "^FROM ghost:" Dockerfile | sed 's/FROM ghost:\([0-9]*\).*/\1/')
+          ALPINE_DIR=$(curl -fsSL "https://api.github.com/repos/docker-library/ghost/contents/${GHOST_MAJOR}" | jq -r '[.[] | select(.name | startswith("alpine")) | .name] | sort | last')
+          NODE_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/docker-library/ghost/master/${GHOST_MAJOR}/${ALPINE_DIR}/Dockerfile" | grep "^FROM node:" | sed 's/FROM node:\([0-9]*\).*/\1/')
           echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
 
       - uses: actions/setup-node@v6

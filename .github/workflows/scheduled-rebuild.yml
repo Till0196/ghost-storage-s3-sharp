@@ -16,10 +16,13 @@ jobs:
     outputs:
       updated: ${{ steps.check.outputs.updated }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Get current Ghost base image digest
         id: digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect ghost:6-alpine --format '{{json .Manifest.Digest}}' | tr -d '"')
+          GHOST_IMAGE=$(grep "^FROM ghost:" Dockerfile | head -1 | awk '{print $2}')
+          DIGEST=$(docker buildx imagetools inspect "${GHOST_IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "value=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Check digest cache
