@@ -12,12 +12,14 @@
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["ghost"],
       "automerge": true,
-      "automergeType": "branch"
+      "automergeType": "pr",
+      "ignoreTests": true
     },
     {
       "matchManagers": ["github-actions"],
       "automerge": true,
-      "automergeType": "branch"
+      "automergeType": "pr",
+      "ignoreTests": true
     }
   ]
 }
