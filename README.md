@@ -136,7 +136,7 @@ Connection settings (`endpoint`, `accessKeyId`, etc.) defined under the adapter 
 | `cdnUrl` | **required** | CDN or public base URL for generated links |
 | `endpoint` | — | Custom endpoint URL for S3-compatible services |
 | `region` | `us-east-1` | AWS region (or `auto` for Cloudflare R2) |
-| `checksumMode` | `when_supported` | `when_supported` (AWS S3) or `when_required` (R2/MinIO) |
+| `checksumMode` | `when_supported` | `when_supported` (AWS S3, MinIO ≥ `RELEASE.2025-07-15`) or `when_required` (Cloudflare R2, older MinIO) |
 | `pathPrefix` | — | Key prefix to namespace files within the bucket |
 | `enableImageOptimization` | `true` | Enable Sharp image processing |
 | `maxWidth` | `1600` | Maximum width for resized images |
@@ -199,6 +199,8 @@ R2 does not support CRC32/CRC64-NVME checksums. Set `checksumMode: "when_require
 ```
 
 ### MinIO
+
+MinIO `RELEASE.2025-07-15` and later support CRC32 checksums natively. For **older** MinIO releases, add `checksumMode: "when_required"` (same workaround as R2).
 
 ```json
 {
@@ -320,7 +322,8 @@ To switch backends, only the `storage__ghost-storage-s3-sharp__*` block changes:
 |---------|-------------------|
 | **Cloudflare R2** | `endpoint=https://<account-id>.r2.cloudflarestorage.com`, `region=auto`, `checksumMode=when_required` |
 | **AWS S3** | `region=<region>` (e.g. `ap-northeast-1`); omit `endpoint` and `checksumMode` |
-| **MinIO** | `endpoint=https://<minio-host>`, `checksumMode=when_required` |
+| **MinIO** (`RELEASE.2025-07-15`+) | `endpoint=https://<minio-host>`; omit `checksumMode` |
+| **MinIO** (older) | `endpoint=https://<minio-host>`, `checksumMode=when_required` |
 
 ## Image optimization details
 
