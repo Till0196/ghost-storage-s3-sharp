@@ -6,32 +6,33 @@ import {
     DeleteObjectCommand
 } from '@aws-sdk/client-s3';
 
-export interface R2ClientConfig {
-    accountId: string;
+export interface S3ClientConfig {
+    endpoint?: string;
     accessKeyId: string;
     secretAccessKey: string;
     bucket: string;
     region?: string;
+    // Some S3-compatible services (e.g. Cloudflare R2) do not support CRC32/CRC64-NVME checksums.
+    // Set to 'when_required' for those services; defaults to 'when_supported' (AWS S3 native behavior).
+    checksumMode?: 'when_supported' | 'when_required';
 }
 
-export class R2Client {
+export class S3CompatibleClient {
     private readonly bucket: string;
     private readonly client: S3Client;
 
-    constructor(config: R2ClientConfig) {
+    constructor(config: S3ClientConfig) {
         this.bucket = config.bucket;
+        const checksumMode = (config.checksumMode ?? 'when_supported').toUpperCase() as 'WHEN_SUPPORTED' | 'WHEN_REQUIRED';
         this.client = new S3Client({
-            region: config.region ?? 'auto',
-            endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
+            region: config.region ?? 'us-east-1',
+            ...(config.endpoint ? { endpoint: config.endpoint } : {}),
             credentials: {
                 accessKeyId: config.accessKeyId,
                 secretAccessKey: config.secretAccessKey
             },
-            // R2 compatibility: R2 does not support the CRC32/CRC64-NVME checksum
-            // headers that @aws-sdk/client-s3 v3.729+ sends by default.
-            // Without these settings, PutObject fails with 501 NotImplemented.
-            requestChecksumCalculation: 'WHEN_REQUIRED',
-            responseChecksumValidation: 'WHEN_REQUIRED'
+            requestChecksumCalculation: checksumMode,
+            responseChecksumValidation: checksumMode
         });
     }
 

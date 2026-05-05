@@ -2,71 +2,126 @@ import fs from 'fs';
 import path from 'path';
 import StorageBase from 'ghost-storage-base';
 import type { RequestHandler, Request, Response, NextFunction } from 'express';
-import { R2Client } from './lib/r2-client';
+import { S3CompatibleClient } from './lib/s3-client';
 import { generateVariants, getContentType, type ImageProcessorConfig } from './lib/image-processor';
 
 // Formats that Sharp can process for resize + format conversion
 const PROCESSABLE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'tiff', 'bmp'];
 
+const env = process.env;
+
+function resolveStr(configVal: string | undefined, envKey: string): string | undefined {
+    return configVal ?? (env[envKey] || undefined);
+}
+
+function resolveBool(configVal: boolean | undefined, envKey: string, defaultVal: boolean): boolean {
+    if (configVal !== undefined) return configVal;
+    const v = env[envKey];
+    if (v === undefined) return defaultVal;
+    return v.toLowerCase() !== 'false' && v !== '0';
+}
+
+function resolveInt(configVal: number | undefined, envKey: string, defaultVal: number): number {
+    if (configVal !== undefined) return configVal;
+    const v = env[envKey];
+    return v ? parseInt(v, 10) : defaultVal;
+}
+
+function resolveIntArray(configVal: number[] | undefined, envKey: string, defaultVal: number[]): number[] {
+    if (configVal !== undefined) return configVal;
+    const v = env[envKey];
+    if (!v) return defaultVal;
+    return v.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+}
+
+function resolveStrArray(configVal: string[] | undefined, envKey: string, defaultVal: string[]): string[] {
+    if (configVal !== undefined) return configVal;
+    const v = env[envKey];
+    if (v === undefined) return defaultVal;
+    if (v === '') return [];
+    return v.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// Parses "webp:80,avif:60,jpeg:85,png:85"
+function resolveQuality(
+    configVal: Record<string, number> | undefined,
+    envKey: string,
+    defaultVal: Record<string, number>
+): Record<string, number> {
+    if (configVal !== undefined) return configVal;
+    const v = env[envKey];
+    if (!v) return defaultVal;
+    return Object.fromEntries(
+        v.split(',').map(pair => {
+            const [fmt, q] = pair.split(':');
+            return [fmt.trim(), parseInt(q.trim(), 10)];
+        }).filter(([, q]) => !isNaN(q as number))
+    );
+}
+
 interface StorageFile {
     name: string;
     path: string;
-    type?: string;
 }
 
-interface R2StorageConfig {
-    accountId: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    bucket: string;
-    cdnUrl: string;
+interface S3StorageConfig {
+    endpoint?: string;
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    bucket?: string;
+    cdnUrl?: string;
     region?: string;
-    // R2 key prefix to segregate images/media/files within the same bucket
+    // Some S3-compatible services (e.g. Cloudflare R2) do not support CRC32/CRC64-NVME checksums.
+    // Set to 'when_required' for those services; defaults to 'when_supported' (AWS S3 native behavior).
+    checksumMode?: 'when_supported' | 'when_required';
+    // S3 key prefix to segregate images/media/files within the same bucket
     pathPrefix?: string;
     // Image optimization (only applies to processable image formats)
     enableImageOptimization?: boolean;
     maxWidth?: number;
     sizes?: number[];
+    // Additional formats to generate (e.g. ['webp', 'avif']). Set [] to disable.
     formats?: string[];
     quality?: Record<string, number>;
 }
 
-class R2Storage extends StorageBase {
+class S3Storage extends StorageBase {
     private readonly cdnUrl: string;
     private readonly pathPrefix: string;
     private readonly enableImageOptimization: boolean;
     private readonly imageConfig: ImageProcessorConfig;
-    private readonly r2: R2Client;
+    private readonly client: S3CompatibleClient;
 
-    constructor(config: R2StorageConfig) {
+    constructor(config: S3StorageConfig = {}) {
         super();
 
-        if (!config.bucket) {
-            throw new Error('ghost-storage-r2 requires a bucket name');
-        }
-        if (!config.accountId) {
-            throw new Error('ghost-storage-r2 requires an accountId');
-        }
-        if (!config.cdnUrl) {
-            throw new Error('ghost-storage-r2 requires a cdnUrl');
-        }
+        const bucket = resolveStr(config.bucket, 'GHOST_STORAGE_S3_BUCKET');
+        const cdnUrl = resolveStr(config.cdnUrl, 'GHOST_STORAGE_S3_CDN_URL');
+        const accessKeyId = resolveStr(config.accessKeyId, 'GHOST_STORAGE_S3_ACCESS_KEY_ID') ?? '';
+        const secretAccessKey = resolveStr(config.secretAccessKey, 'GHOST_STORAGE_S3_SECRET_ACCESS_KEY') ?? '';
 
-        this.cdnUrl = config.cdnUrl.replace(/\/+$/, '');
-        this.pathPrefix = (config.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
-        this.enableImageOptimization = config.enableImageOptimization ?? true;
+        if (!bucket) throw new Error('ghost-storage-s3-sharp requires a bucket name');
+        if (!cdnUrl) throw new Error('ghost-storage-s3-sharp requires a cdnUrl');
+
+        this.cdnUrl = cdnUrl.replace(/\/+$/, '');
+        this.pathPrefix = (resolveStr(config.pathPrefix, 'GHOST_STORAGE_S3_PATH_PREFIX') ?? '').replace(/^\/+|\/+$/g, '');
+        this.enableImageOptimization = resolveBool(config.enableImageOptimization, 'GHOST_STORAGE_S3_ENABLE_IMAGE_OPTIMIZATION', true);
         this.imageConfig = {
-            maxWidth: config.maxWidth ?? 1600,
-            sizes: config.sizes ?? [600, 1200],
-            formats: config.formats ?? ['webp', 'avif'],
-            quality: config.quality ?? { webp: 80, avif: 60, jpeg: 85, png: 85 }
+            maxWidth: resolveInt(config.maxWidth, 'GHOST_STORAGE_S3_MAX_WIDTH', 1600),
+            sizes: resolveIntArray(config.sizes, 'GHOST_STORAGE_S3_SIZES', [600, 1200]),
+            formats: resolveStrArray(config.formats, 'GHOST_STORAGE_S3_FORMATS', ['webp', 'avif']),
+            quality: resolveQuality(config.quality, 'GHOST_STORAGE_S3_QUALITY', { webp: 80, avif: 60, jpeg: 85, png: 85 })
         };
 
-        this.r2 = new R2Client({
-            accountId: config.accountId,
-            accessKeyId: config.accessKeyId,
-            secretAccessKey: config.secretAccessKey,
-            bucket: config.bucket,
-            region: config.region ?? 'auto'
+        const checksumMode = (resolveStr(config.checksumMode, 'GHOST_STORAGE_S3_CHECKSUM_MODE') ?? 'when_supported') as 'when_supported' | 'when_required';
+
+        this.client = new S3CompatibleClient({
+            endpoint: resolveStr(config.endpoint, 'GHOST_STORAGE_S3_ENDPOINT'),
+            accessKeyId,
+            secretAccessKey,
+            bucket,
+            region: resolveStr(config.region, 'GHOST_STORAGE_S3_REGION'),
+            checksumMode
         });
     }
 
@@ -94,18 +149,17 @@ class R2Storage extends StorageBase {
 
         if (!this.shouldProcessImage(ext)) {
             const contentType = getContentType(ext);
-            await this.r2.upload(prefixedPath, buffer, contentType);
+            await this.client.upload(prefixedPath, buffer, contentType);
             return this.buildUrl(prefixedPath);
         }
 
         const variants = await generateVariants(buffer, prefixedPath, this.imageConfig);
 
-        const baseKey = prefixedPath;
         const results = await Promise.allSettled(
-            variants.map(v => this.r2.upload(v.key, v.buffer, v.contentType))
+            variants.map(v => this.client.upload(v.key, v.buffer, v.contentType))
         );
 
-        const baseIndex = variants.findIndex(v => v.key === baseKey);
+        const baseIndex = variants.findIndex(v => v.key === prefixedPath);
         if (baseIndex !== -1 && results[baseIndex].status === 'rejected') {
             throw new Error(`Failed to upload base image: ${(results[baseIndex] as PromiseRejectedResult).reason.message}`);
         }
@@ -113,7 +167,7 @@ class R2Storage extends StorageBase {
         results.forEach((result, i) => {
             if (result.status === 'rejected' && i !== baseIndex) {
                 console.warn(
-                    `[ghost-storage-r2] Failed to upload variant ${variants[i].key}:`,
+                    `[ghost-storage-s3-sharp] Failed to upload variant ${variants[i].key}:`,
                     (result as PromiseRejectedResult).reason.message
                 );
             }
@@ -126,13 +180,13 @@ class R2Storage extends StorageBase {
         const prefixedPath = this.prefixKey(targetPath);
         const ext = path.extname(targetPath).slice(1).toLowerCase();
         const contentType = getContentType(ext);
-        await this.r2.upload(prefixedPath, buffer, contentType);
+        await this.client.upload(prefixedPath, buffer, contentType);
         return this.buildUrl(prefixedPath);
     }
 
     async exists(fileName: string, targetDir?: string): Promise<boolean> {
         const relativePath = targetDir ? path.posix.join(targetDir, fileName) : fileName;
-        return this.r2.exists(this.prefixKey(relativePath));
+        return this.client.exists(this.prefixKey(relativePath));
     }
 
     async delete(fileName: string, targetDir?: string): Promise<void> {
@@ -158,13 +212,13 @@ class R2Storage extends StorageBase {
             }
         }
 
-        await Promise.allSettled(keys.map(k => this.r2.delete(k)));
+        await Promise.allSettled(keys.map(k => this.client.delete(k)));
     }
 
     async read(options: { path: string } | string): Promise<Buffer> {
         const filePath = typeof options === 'string' ? options : options.path;
         const key = this.urlToPath(filePath);
-        return this.r2.read(key);
+        return this.client.read(key);
     }
 
     serve(): RequestHandler {
@@ -189,4 +243,4 @@ class R2Storage extends StorageBase {
     }
 }
 
-export = R2Storage;
+export = S3Storage;

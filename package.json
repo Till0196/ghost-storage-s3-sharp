@@ -1,7 +1,7 @@
 {
-  "name": "ghost-storage-r2",
+  "name": "ghost-storage-s3-sharp",
   "version": "1.0.0",
-  "description": "Ghost storage adapter for Cloudflare R2 with Sharp image optimization",
+  "description": "Ghost storage adapter for S3-compatible object storage (AWS S3, Cloudflare R2, MinIO, etc.) with Sharp image optimization",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

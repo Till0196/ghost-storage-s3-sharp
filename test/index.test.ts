@@ -1,28 +1,26 @@
 import fs from 'fs';
-import path from 'path';
 
-jest.mock('../src/lib/r2-client');
+jest.mock('../src/lib/s3-client');
 jest.mock('../src/lib/image-processor');
 
-import { R2Client } from '../src/lib/r2-client';
+import { S3CompatibleClient } from '../src/lib/s3-client';
 import { generateVariants, getContentType } from '../src/lib/image-processor';
-import R2Storage from '../src/index';
+import S3Storage from '../src/index';
 
-const MockR2Client = R2Client as jest.MockedClass<typeof R2Client>;
+const MockS3Client = S3CompatibleClient as jest.MockedClass<typeof S3CompatibleClient>;
 const mockGenerateVariants = generateVariants as jest.MockedFunction<typeof generateVariants>;
 const mockGetContentType = getContentType as jest.MockedFunction<typeof getContentType>;
 
 const baseConfig = {
-    accountId: 'test-account',
     accessKeyId: 'test-key',
     secretAccessKey: 'test-secret',
     bucket: 'test-bucket',
     cdnUrl: 'https://images.example.com'
 };
 
-describe('R2Storage', () => {
-    let adapter: InstanceType<typeof R2Storage>;
-    let mockR2: {
+describe('S3Storage', () => {
+    let adapter: InstanceType<typeof S3Storage>;
+    let mockClient: {
         upload: jest.Mock;
         exists: jest.Mock;
         delete: jest.Mock;
@@ -32,13 +30,13 @@ describe('R2Storage', () => {
     beforeEach(() => {
         jest.clearAllMocks();
 
-        mockR2 = {
+        mockClient = {
             upload: jest.fn().mockResolvedValue(undefined),
             exists: jest.fn().mockResolvedValue(false),
             delete: jest.fn().mockResolvedValue(undefined),
             read: jest.fn().mockResolvedValue(Buffer.from('test'))
         };
-        MockR2Client.mockImplementation(() => mockR2 as any);
+        MockS3Client.mockImplementation(() => mockClient as any);
 
         mockGetContentType.mockImplementation((ext: string) => {
             const types: Record<string, string> = {
@@ -49,27 +47,22 @@ describe('R2Storage', () => {
             return types[ext] ?? 'application/octet-stream';
         });
 
-        adapter = new R2Storage(baseConfig);
+        adapter = new S3Storage(baseConfig);
     });
 
     describe('constructor', () => {
         test('throws without bucket', () => {
-            expect(() => new R2Storage({ accountId: 'x', cdnUrl: 'x' } as any))
+            expect(() => new S3Storage({ cdnUrl: 'x' } as any))
                 .toThrow('bucket');
         });
 
-        test('throws without accountId', () => {
-            expect(() => new R2Storage({ bucket: 'x', cdnUrl: 'x' } as any))
-                .toThrow('accountId');
-        });
-
         test('throws without cdnUrl', () => {
-            expect(() => new R2Storage({ bucket: 'x', accountId: 'x' } as any))
+            expect(() => new S3Storage({ bucket: 'x' } as any))
                 .toThrow('cdnUrl');
         });
 
         test('strips trailing slash from cdnUrl', () => {
-            const a = new R2Storage({ ...baseConfig, cdnUrl: 'https://cdn.test.com/' });
+            const a = new S3Storage({ ...baseConfig, cdnUrl: 'https://cdn.test.com/' });
             expect((a as any).cdnUrl).toBe('https://cdn.test.com');
         });
 
@@ -79,6 +72,56 @@ describe('R2Storage', () => {
 
         test('defaults pathPrefix to empty string', () => {
             expect((adapter as any).pathPrefix).toBe('');
+        });
+
+        describe('env var fallback', () => {
+            const envVars: Record<string, string> = {
+                GHOST_STORAGE_S3_BUCKET: 'env-bucket',
+                GHOST_STORAGE_S3_CDN_URL: 'https://env-cdn.example.com',
+                GHOST_STORAGE_S3_ACCESS_KEY_ID: 'env-key',
+                GHOST_STORAGE_S3_SECRET_ACCESS_KEY: 'env-secret'
+            };
+
+            beforeEach(() => { Object.assign(process.env, envVars); });
+            afterEach(() => { Object.keys(envVars).forEach(k => delete process.env[k]); });
+
+            test('reads required values from env vars', () => {
+                const a = new S3Storage();
+                expect((a as any).cdnUrl).toBe('https://env-cdn.example.com');
+            });
+
+            test('config file takes precedence over env vars', () => {
+                const a = new S3Storage({ ...baseConfig, cdnUrl: 'https://config-cdn.example.com' });
+                expect((a as any).cdnUrl).toBe('https://config-cdn.example.com');
+            });
+
+            test('parses GHOST_STORAGE_S3_FORMATS as comma-separated list', () => {
+                process.env.GHOST_STORAGE_S3_FORMATS = 'webp';
+                const a = new S3Storage(baseConfig);
+                expect((a as any).imageConfig.formats).toEqual(['webp']);
+                delete process.env.GHOST_STORAGE_S3_FORMATS;
+            });
+
+            test('parses empty GHOST_STORAGE_S3_FORMATS as no extra formats', () => {
+                process.env.GHOST_STORAGE_S3_FORMATS = '';
+                const a = new S3Storage(baseConfig);
+                expect((a as any).imageConfig.formats).toEqual([]);
+                delete process.env.GHOST_STORAGE_S3_FORMATS;
+            });
+
+            test('parses GHOST_STORAGE_S3_SIZES as comma-separated numbers', () => {
+                process.env.GHOST_STORAGE_S3_SIZES = '800,1600';
+                const a = new S3Storage(baseConfig);
+                expect((a as any).imageConfig.sizes).toEqual([800, 1600]);
+                delete process.env.GHOST_STORAGE_S3_SIZES;
+            });
+
+            test('parses GHOST_STORAGE_S3_QUALITY as key:value pairs', () => {
+                process.env.GHOST_STORAGE_S3_QUALITY = 'webp:75,jpeg:90';
+                const a = new S3Storage(baseConfig);
+                expect((a as any).imageConfig.quality).toEqual({ webp: 75, jpeg: 90 });
+                delete process.env.GHOST_STORAGE_S3_QUALITY;
+            });
         });
     });
 
@@ -106,7 +149,7 @@ describe('R2Storage', () => {
         test('uploads all variants for processable image', async () => {
             await adapter.save(mockFile, '2026/03');
             expect(mockGenerateVariants).toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(3);
+            expect(mockClient.upload).toHaveBeenCalledTimes(3);
         });
 
         test('skips image processing for SVG', async () => {
@@ -116,12 +159,12 @@ describe('R2Storage', () => {
             const url = await adapter.save(svgFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
             expect(url).toMatch(/icon\.svg$/);
         });
 
         test('throws if base image upload fails', async () => {
-            mockR2.upload.mockRejectedValueOnce(new Error('upload failed'));
+            mockClient.upload.mockRejectedValueOnce(new Error('upload failed'));
 
             await expect(adapter.save(mockFile, '2026/03'))
                 .rejects.toThrow('Failed to upload base image');
@@ -140,8 +183,8 @@ describe('R2Storage', () => {
             const url = await adapter.save(videoFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
-            expect(mockR2.upload).toHaveBeenCalledWith(
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledWith(
                 '2026/03/clip.mp4', Buffer.from('video-data'), 'video/mp4'
             );
             expect(url).toBe('https://images.example.com/2026/03/clip.mp4');
@@ -154,7 +197,7 @@ describe('R2Storage', () => {
             const url = await adapter.save(audioFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
             expect(url).toBe('https://images.example.com/2026/03/podcast.mp3');
         });
 
@@ -165,7 +208,7 @@ describe('R2Storage', () => {
             const url = await adapter.save(pdfFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
             expect(url).toBe('https://images.example.com/2026/03/doc.pdf');
         });
 
@@ -173,10 +216,10 @@ describe('R2Storage', () => {
             const gifFile = { name: 'anim.gif', path: '/tmp/upload_gif.gif' };
             jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('gif-data'));
 
-            const url = await adapter.save(gifFile, '2026/03');
+            await adapter.save(gifFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -185,21 +228,21 @@ describe('R2Storage', () => {
             jest.restoreAllMocks();
         });
 
-        test('prepends pathPrefix to R2 key for media', async () => {
-            const mediaAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/media', enableImageOptimization: false });
+        test('prepends pathPrefix to storage key for media', async () => {
+            const mediaAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/media', enableImageOptimization: false });
             const videoFile = { name: 'clip.mp4', path: '/tmp/upload.mp4' };
             jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('video'));
 
             const url = await mediaAdapter.save(videoFile, '2026/03');
 
-            expect(mockR2.upload).toHaveBeenCalledWith(
+            expect(mockClient.upload).toHaveBeenCalledWith(
                 'content/media/2026/03/clip.mp4', expect.any(Buffer), 'video/mp4'
             );
             expect(url).toBe('https://images.example.com/content/media/2026/03/clip.mp4');
         });
 
-        test('prepends pathPrefix to R2 key for images with variants', async () => {
-            const imgAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/images' });
+        test('prepends pathPrefix to storage key for images with variants', async () => {
+            const imgAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/images' });
             const imgFile = { name: 'photo.jpg', path: '/tmp/upload.jpg' };
             jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('img'));
             mockGenerateVariants.mockResolvedValue([
@@ -223,14 +266,14 @@ describe('R2Storage', () => {
         });
 
         test('skips processing even for JPEG when optimization disabled', async () => {
-            const noOptAdapter = new R2Storage({ ...baseConfig, enableImageOptimization: false });
+            const noOptAdapter = new S3Storage({ ...baseConfig, enableImageOptimization: false });
             const jpgFile = { name: 'photo.jpg', path: '/tmp/upload.jpg' };
             jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('jpg'));
 
             await noOptAdapter.save(jpgFile, '2026/03');
 
             expect(mockGenerateVariants).not.toHaveBeenCalled();
-            expect(mockR2.upload).toHaveBeenCalledTimes(1);
+            expect(mockClient.upload).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -238,38 +281,38 @@ describe('R2Storage', () => {
         test('uploads buffer and returns CDN URL', async () => {
             const buf = Buffer.from('raw data');
             const url = await adapter.saveRaw(buf, '2026/03/data.json');
-            expect(mockR2.upload).toHaveBeenCalledWith('2026/03/data.json', buf, 'application/json');
+            expect(mockClient.upload).toHaveBeenCalledWith('2026/03/data.json', buf, 'application/json');
             expect(url).toBe('https://images.example.com/2026/03/data.json');
         });
 
         test('applies pathPrefix to saveRaw', async () => {
-            const prefixAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/files' });
+            const prefixAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/files' });
             const buf = Buffer.from('data');
             const url = await prefixAdapter.saveRaw(buf, '2026/03/data.json');
-            expect(mockR2.upload).toHaveBeenCalledWith('content/files/2026/03/data.json', buf, 'application/json');
+            expect(mockClient.upload).toHaveBeenCalledWith('content/files/2026/03/data.json', buf, 'application/json');
             expect(url).toBe('https://images.example.com/content/files/2026/03/data.json');
         });
     });
 
     describe('exists', () => {
-        test('delegates to R2 client with joined path', async () => {
-            mockR2.exists.mockResolvedValue(true);
+        test('delegates to storage client with joined path', async () => {
+            mockClient.exists.mockResolvedValue(true);
             const result = await adapter.exists('photo.jpg', '2026/03');
-            expect(mockR2.exists).toHaveBeenCalledWith('2026/03/photo.jpg');
+            expect(mockClient.exists).toHaveBeenCalledWith('2026/03/photo.jpg');
             expect(result).toBe(true);
         });
 
         test('works without targetDir', async () => {
-            mockR2.exists.mockResolvedValue(false);
+            mockClient.exists.mockResolvedValue(false);
             const result = await adapter.exists('photo.jpg');
-            expect(mockR2.exists).toHaveBeenCalledWith('photo.jpg');
+            expect(mockClient.exists).toHaveBeenCalledWith('photo.jpg');
             expect(result).toBe(false);
         });
 
         test('applies pathPrefix', async () => {
-            const prefixAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/media' });
+            const prefixAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/media' });
             await prefixAdapter.exists('clip.mp4', '2026/03');
-            expect(mockR2.exists).toHaveBeenCalledWith('content/media/2026/03/clip.mp4');
+            expect(mockClient.exists).toHaveBeenCalledWith('content/media/2026/03/clip.mp4');
         });
     });
 
@@ -277,36 +320,36 @@ describe('R2Storage', () => {
         test('deletes all variant keys for processable image', async () => {
             await adapter.delete('photo.jpg', '2026/03');
             // base + 2 formats + 2 sizes × 3 formats = 9
-            expect(mockR2.delete).toHaveBeenCalledTimes(9);
+            expect(mockClient.delete).toHaveBeenCalledTimes(9);
         });
 
         test('deletes only one key for non-processable format', async () => {
             await adapter.delete('icon.svg', '2026/03');
-            expect(mockR2.delete).toHaveBeenCalledTimes(1);
+            expect(mockClient.delete).toHaveBeenCalledTimes(1);
         });
 
         test('deletes only one key for media file', async () => {
             await adapter.delete('clip.mp4', '2026/03');
-            expect(mockR2.delete).toHaveBeenCalledTimes(1);
+            expect(mockClient.delete).toHaveBeenCalledTimes(1);
         });
 
         test('deletes only one key when optimization disabled', async () => {
-            const noOptAdapter = new R2Storage({ ...baseConfig, enableImageOptimization: false });
+            const noOptAdapter = new S3Storage({ ...baseConfig, enableImageOptimization: false });
             await noOptAdapter.delete('photo.jpg', '2026/03');
-            expect(mockR2.delete).toHaveBeenCalledTimes(1);
+            expect(mockClient.delete).toHaveBeenCalledTimes(1);
         });
     });
 
     describe('read', () => {
-        test('reads from R2 using path from options object', async () => {
+        test('reads from storage using path from options object', async () => {
             const buf = await adapter.read({ path: 'https://images.example.com/2026/03/photo.jpg' });
-            expect(mockR2.read).toHaveBeenCalledWith('2026/03/photo.jpg');
+            expect(mockClient.read).toHaveBeenCalledWith('2026/03/photo.jpg');
             expect(Buffer.isBuffer(buf)).toBe(true);
         });
 
-        test('reads from R2 using string path', async () => {
+        test('reads from storage using string path', async () => {
             await adapter.read('https://images.example.com/2026/03/photo.jpg');
-            expect(mockR2.read).toHaveBeenCalledWith('2026/03/photo.jpg');
+            expect(mockClient.read).toHaveBeenCalledWith('2026/03/photo.jpg');
         });
     });
 
@@ -323,7 +366,7 @@ describe('R2Storage', () => {
         });
 
         test('applies pathPrefix in redirect', () => {
-            const prefixAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/media' });
+            const prefixAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/media' });
             const middleware = prefixAdapter.serve();
             const req = { path: '/2026/03/clip.mp4' } as any;
             const res = { redirect: jest.fn() } as any;
@@ -357,7 +400,7 @@ describe('R2Storage', () => {
         });
 
         test('applies pathPrefix when stripping content path', () => {
-            const prefixAdapter = new R2Storage({ ...baseConfig, pathPrefix: 'content/media' });
+            const prefixAdapter = new S3Storage({ ...baseConfig, pathPrefix: 'content/media' });
             expect(prefixAdapter.urlToPath('/content/media/2026/03/clip.mp4'))
                 .toBe('content/media/2026/03/clip.mp4');
         });
