@@ -12,6 +12,11 @@
       "matchPackageNames": ["ghost"],
       "automerge": true,
       "automergeType": "branch"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "automergeType": "branch"
     }
   ]
 }
