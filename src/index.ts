@@ -3,7 +3,7 @@ import path from 'path';
 import StorageBase from 'ghost-storage-base';
 import type { RequestHandler, Request, Response, NextFunction } from 'express';
 import { S3CompatibleClient } from './lib/s3-client';
-import { generateVariants, getContentType, type ImageProcessorConfig } from './lib/image-processor';
+import { generateVariants, getContentType, buildSizeVariantKey, type ImageProcessorConfig, type VariantLayout } from './lib/image-processor';
 
 // Formats that Sharp can process for resize + format conversion
 const PROCESSABLE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'tiff', 'bmp'];
@@ -74,6 +74,10 @@ interface S3StorageConfig {
     // Additional formats to generate (e.g. ['webp', 'avif']). Set [] / "" to disable.
     formats?: string[] | string;
     quality?: Record<string, number> | string;
+    // Variant key layout:
+    // - 'ghost' (default): inserts size/wN/ after pathPrefix, matching Ghost's srcset URL convention
+    // - 'top-level': places size/wN/ at the top of the bucket (useful for SSGs or custom theme setups)
+    variantLayout?: VariantLayout;
 }
 
 class S3Storage extends StorageBase {
@@ -96,7 +100,8 @@ class S3Storage extends StorageBase {
             maxWidth: toInt(config.maxWidth, 1600),
             sizes: toIntArray(config.sizes, [600, 1200]),
             formats: toStrArray(config.formats, ['webp', 'avif']),
-            quality: toQuality(config.quality, { webp: 80, avif: 60, jpeg: 85, png: 85 })
+            quality: toQuality(config.quality, { webp: 80, avif: 60, jpeg: 85, png: 85 }),
+            layout: (config.variantLayout ?? 'ghost') as VariantLayout
         };
 
         this.client = new S3CompatibleClient({
@@ -146,7 +151,7 @@ class S3Storage extends StorageBase {
             return this.buildUrl(prefixedPath);
         }
 
-        const variants = await generateVariants(buffer, prefixedPath, this.imageConfig);
+        const variants = await generateVariants(buffer, prefixedPath, this.pathPrefix, this.imageConfig);
 
         const results = await Promise.allSettled(
             variants.map(v => this.client.upload(v.key, v.buffer, v.contentType))
@@ -196,16 +201,14 @@ class S3Storage extends StorageBase {
 
         if (this.shouldProcessImage(ext)) {
             const basePath = prefixedPath.slice(0, prefixedPath.length - ext.length - 1);
-            const dir = path.posix.dirname(prefixedPath);
-            const stem = path.posix.basename(basePath);
 
             for (const format of this.imageConfig.formats) {
                 keys.push(`${basePath}.${format}`);
             }
             for (const size of this.imageConfig.sizes) {
-                keys.push(`size/w${size}/${dir}/${stem}.${ext}`);
+                keys.push(buildSizeVariantKey(prefixedPath, this.pathPrefix, size, ext, this.imageConfig.layout));
                 for (const format of this.imageConfig.formats) {
-                    keys.push(`size/w${size}/${dir}/${stem}.${format}`);
+                    keys.push(buildSizeVariantKey(prefixedPath, this.pathPrefix, size, format, this.imageConfig.layout));
                 }
             }
         }
