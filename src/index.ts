@@ -8,52 +8,39 @@ import { generateVariants, getContentType, type ImageProcessorConfig } from './l
 // Formats that Sharp can process for resize + format conversion
 const PROCESSABLE_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'tiff', 'bmp'];
 
-const env = process.env;
+// Ghost passes config values from environment variables as strings, so we coerce types here.
 
-function resolveStr(configVal: string | undefined, envKey: string): string | undefined {
-    return configVal ?? (env[envKey] || undefined);
-}
-
-function resolveBool(configVal: boolean | string | undefined, envKey: string, defaultVal: boolean): boolean {
-    if (configVal !== undefined) {
-        if (typeof configVal === 'boolean') return configVal;
-        return configVal.toLowerCase() !== 'false' && configVal !== '0';
-    }
-    const v = env[envKey];
+function toBool(v: boolean | string | undefined, defaultVal: boolean): boolean {
     if (v === undefined) return defaultVal;
+    if (typeof v === 'boolean') return v;
     return v.toLowerCase() !== 'false' && v !== '0';
 }
 
-function resolveInt(configVal: number | undefined, envKey: string, defaultVal: number): number {
-    if (configVal !== undefined) return configVal;
-    const v = env[envKey];
-    return v ? parseInt(v, 10) : defaultVal;
+function toInt(v: number | string | undefined, defaultVal: number): number {
+    if (v === undefined) return defaultVal;
+    return typeof v === 'number' ? v : parseInt(v, 10);
 }
 
-function resolveIntArray(configVal: number[] | undefined, envKey: string, defaultVal: number[]): number[] {
-    if (configVal !== undefined) return configVal;
-    const v = env[envKey];
-    if (!v) return defaultVal;
+function toIntArray(v: number[] | string | undefined, defaultVal: number[]): number[] {
+    if (v === undefined) return defaultVal;
+    if (Array.isArray(v)) return v;
     return v.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
 }
 
-function resolveStrArray(configVal: string[] | undefined, envKey: string, defaultVal: string[]): string[] {
-    if (configVal !== undefined) return configVal;
-    const v = env[envKey];
+function toStrArray(v: string[] | string | undefined, defaultVal: string[]): string[] {
     if (v === undefined) return defaultVal;
+    if (Array.isArray(v)) return v;
     if (v === '') return [];
     return v.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 // Parses "webp:80,avif:60,jpeg:85,png:85"
-function resolveQuality(
-    configVal: Record<string, number> | undefined,
-    envKey: string,
+function toQuality(
+    v: Record<string, number> | string | undefined,
     defaultVal: Record<string, number>
 ): Record<string, number> {
-    if (configVal !== undefined) return configVal;
-    const v = env[envKey];
-    if (!v) return defaultVal;
+    if (v === undefined) return defaultVal;
+    if (typeof v === 'object') return v;
     return Object.fromEntries(
         v.split(',').map(pair => {
             const [fmt, q] = pair.split(':');
@@ -81,11 +68,12 @@ interface S3StorageConfig {
     pathPrefix?: string;
     // Image optimization (only applies to processable image formats)
     enableImageOptimization?: boolean | string;
-    maxWidth?: number;
-    sizes?: number[];
-    // Additional formats to generate (e.g. ['webp', 'avif']). Set [] to disable.
-    formats?: string[];
-    quality?: Record<string, number>;
+    // Numeric/array values may arrive as strings when set via Ghost env var convention
+    maxWidth?: number | string;
+    sizes?: number[] | string;
+    // Additional formats to generate (e.g. ['webp', 'avif']). Set [] / "" to disable.
+    formats?: string[] | string;
+    quality?: Record<string, number> | string;
 }
 
 class S3Storage extends StorageBase {
@@ -98,33 +86,26 @@ class S3Storage extends StorageBase {
     constructor(config: S3StorageConfig = {}) {
         super();
 
-        const bucket = resolveStr(config.bucket, 'GHOST_STORAGE_S3_BUCKET');
-        const cdnUrl = resolveStr(config.cdnUrl, 'GHOST_STORAGE_S3_CDN_URL');
-        const accessKeyId = resolveStr(config.accessKeyId, 'GHOST_STORAGE_S3_ACCESS_KEY_ID') ?? '';
-        const secretAccessKey = resolveStr(config.secretAccessKey, 'GHOST_STORAGE_S3_SECRET_ACCESS_KEY') ?? '';
+        if (!config.bucket) throw new Error('ghost-storage-s3-sharp requires a bucket name');
+        if (!config.cdnUrl) throw new Error('ghost-storage-s3-sharp requires a cdnUrl');
 
-        if (!bucket) throw new Error('ghost-storage-s3-sharp requires a bucket name');
-        if (!cdnUrl) throw new Error('ghost-storage-s3-sharp requires a cdnUrl');
-
-        this.cdnUrl = cdnUrl.replace(/\/+$/, '');
-        this.pathPrefix = (resolveStr(config.pathPrefix, 'GHOST_STORAGE_S3_PATH_PREFIX') ?? '').replace(/^\/+|\/+$/g, '');
-        this.enableImageOptimization = resolveBool(config.enableImageOptimization, 'GHOST_STORAGE_S3_ENABLE_IMAGE_OPTIMIZATION', true);
+        this.cdnUrl = config.cdnUrl.replace(/\/+$/, '');
+        this.pathPrefix = (config.pathPrefix ?? '').replace(/^\/+|\/+$/g, '');
+        this.enableImageOptimization = toBool(config.enableImageOptimization, true);
         this.imageConfig = {
-            maxWidth: resolveInt(config.maxWidth, 'GHOST_STORAGE_S3_MAX_WIDTH', 1600),
-            sizes: resolveIntArray(config.sizes, 'GHOST_STORAGE_S3_SIZES', [600, 1200]),
-            formats: resolveStrArray(config.formats, 'GHOST_STORAGE_S3_FORMATS', ['webp', 'avif']),
-            quality: resolveQuality(config.quality, 'GHOST_STORAGE_S3_QUALITY', { webp: 80, avif: 60, jpeg: 85, png: 85 })
+            maxWidth: toInt(config.maxWidth, 1600),
+            sizes: toIntArray(config.sizes, [600, 1200]),
+            formats: toStrArray(config.formats, ['webp', 'avif']),
+            quality: toQuality(config.quality, { webp: 80, avif: 60, jpeg: 85, png: 85 })
         };
 
-        const checksumMode = (resolveStr(config.checksumMode, 'GHOST_STORAGE_S3_CHECKSUM_MODE') ?? 'when_supported') as 'when_supported' | 'when_required';
-
         this.client = new S3CompatibleClient({
-            endpoint: resolveStr(config.endpoint, 'GHOST_STORAGE_S3_ENDPOINT'),
-            accessKeyId,
-            secretAccessKey,
-            bucket,
-            region: resolveStr(config.region, 'GHOST_STORAGE_S3_REGION'),
-            checksumMode
+            endpoint: config.endpoint,
+            accessKeyId: config.accessKeyId ?? '',
+            secretAccessKey: config.secretAccessKey ?? '',
+            bucket: config.bucket,
+            region: config.region,
+            checksumMode: config.checksumMode ?? 'when_supported'
         });
     }
 

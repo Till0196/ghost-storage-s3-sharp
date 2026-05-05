@@ -70,62 +70,39 @@ describe('S3Storage', () => {
             expect((adapter as any).enableImageOptimization).toBe(true);
         });
 
-        test('accepts string "false" for enableImageOptimization (Ghost env var convention)', () => {
-            const a = new S3Storage({ ...baseConfig, enableImageOptimization: 'false' as any });
-            expect((a as any).enableImageOptimization).toBe(false);
-        });
-
         test('defaults pathPrefix to empty string', () => {
             expect((adapter as any).pathPrefix).toBe('');
         });
 
-        describe('env var fallback', () => {
-            const envVars: Record<string, string> = {
-                GHOST_STORAGE_S3_BUCKET: 'env-bucket',
-                GHOST_STORAGE_S3_CDN_URL: 'https://env-cdn.example.com',
-                GHOST_STORAGE_S3_ACCESS_KEY_ID: 'env-key',
-                GHOST_STORAGE_S3_SECRET_ACCESS_KEY: 'env-secret'
-            };
-
-            beforeEach(() => { Object.assign(process.env, envVars); });
-            afterEach(() => { Object.keys(envVars).forEach(k => delete process.env[k]); });
-
-            test('reads required values from env vars', () => {
-                const a = new S3Storage();
-                expect((a as any).cdnUrl).toBe('https://env-cdn.example.com');
+        describe('string coercion (Ghost env var convention)', () => {
+            test('coerces "false" to boolean for enableImageOptimization', () => {
+                const a = new S3Storage({ ...baseConfig, enableImageOptimization: 'false' as any });
+                expect((a as any).enableImageOptimization).toBe(false);
             });
 
-            test('config file takes precedence over env vars', () => {
-                const a = new S3Storage({ ...baseConfig, cdnUrl: 'https://config-cdn.example.com' });
-                expect((a as any).cdnUrl).toBe('https://config-cdn.example.com');
-            });
-
-            test('parses GHOST_STORAGE_S3_FORMATS as comma-separated list', () => {
-                process.env.GHOST_STORAGE_S3_FORMATS = 'webp';
-                const a = new S3Storage(baseConfig);
+            test('parses formats from comma-separated string', () => {
+                const a = new S3Storage({ ...baseConfig, formats: 'webp' as any });
                 expect((a as any).imageConfig.formats).toEqual(['webp']);
-                delete process.env.GHOST_STORAGE_S3_FORMATS;
             });
 
-            test('parses empty GHOST_STORAGE_S3_FORMATS as no extra formats', () => {
-                process.env.GHOST_STORAGE_S3_FORMATS = '';
-                const a = new S3Storage(baseConfig);
+            test('parses empty formats string as no extra formats', () => {
+                const a = new S3Storage({ ...baseConfig, formats: '' as any });
                 expect((a as any).imageConfig.formats).toEqual([]);
-                delete process.env.GHOST_STORAGE_S3_FORMATS;
             });
 
-            test('parses GHOST_STORAGE_S3_SIZES as comma-separated numbers', () => {
-                process.env.GHOST_STORAGE_S3_SIZES = '800,1600';
-                const a = new S3Storage(baseConfig);
+            test('parses sizes from comma-separated string', () => {
+                const a = new S3Storage({ ...baseConfig, sizes: '800,1600' as any });
                 expect((a as any).imageConfig.sizes).toEqual([800, 1600]);
-                delete process.env.GHOST_STORAGE_S3_SIZES;
             });
 
-            test('parses GHOST_STORAGE_S3_QUALITY as key:value pairs', () => {
-                process.env.GHOST_STORAGE_S3_QUALITY = 'webp:75,jpeg:90';
-                const a = new S3Storage(baseConfig);
+            test('parses quality from key:value string', () => {
+                const a = new S3Storage({ ...baseConfig, quality: 'webp:75,jpeg:90' as any });
                 expect((a as any).imageConfig.quality).toEqual({ webp: 75, jpeg: 90 });
-                delete process.env.GHOST_STORAGE_S3_QUALITY;
+            });
+
+            test('parses maxWidth from string', () => {
+                const a = new S3Storage({ ...baseConfig, maxWidth: '2000' as any });
+                expect((a as any).imageConfig.maxWidth).toBe(2000);
             });
         });
     });
