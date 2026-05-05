@@ -9,6 +9,8 @@ Ghost storage adapter for S3-compatible object storage (AWS S3, Cloudflare R2, M
 - Automatic image optimization via Sharp (resize, WebP/AVIF conversion)
 - Responsive image variants generation
 - Configurable per-type behavior (e.g. images optimized, media/files uploaded as-is)
+- **No CDN image transformation required**: variants are generated at upload time, so plain object storage is sufficient — no need for a CDN with dynamic resizing capabilities
+- **WebP/AVIF variant generation**: Ghost's standard themes do not output WebP or AVIF. This adapter pre-generates those variants at upload time — useful when using Ghost as a headless CMS with a separate SSG framework, or when serving directly from Ghost with a custom theme that references the variant URLs
 
 ## How files are stored
 
@@ -20,36 +22,58 @@ This adapter handles all three Ghost upload types. By default each is namespaced
 | Media | mp4, mp3, wav, webm, etc. | `content/media/2026/03/clip.mp4` |
 | Files | pdf, zip, csv, txt, etc. | `content/files/2026/03/doc.pdf` |
 
-For images with optimization enabled (default), additional variants are generated. The bucket layout for an upload of `2026/03/photo.jpg` (with default `sizes: [600, 1200]`, `formats: ["webp", "avif"]`) plus a media and a file upload looks like:
+For images with optimization enabled (default), additional variants are generated. The exact layout depends on the `variantLayout` option.
+
+### `variantLayout: "ghost"` (default) — matches Ghost's srcset URLs
+
+Best for ordinary Ghost themes: Ghost's `imageOptimization.srcsets` generates URLs like `/content/images/size/wN/...`, so the on-disk keys must match. Enable `imageOptimization.srcsets` so Ghost injects the responsive `<img srcset="...">` markup automatically.
+
+```
+my-bucket/
+└── content/
+    ├── images/
+    │   ├── 2026/03/
+    │   │   ├── photo.jpg          ← original format, max width  (URL returned to Ghost)
+    │   │   ├── photo.webp         ← additional format
+    │   │   └── photo.avif         ← additional format
+    │   └── size/
+    │       ├── w600/2026/03/
+    │       │   ├── photo.jpg      ← resized 600w
+    │       │   ├── photo.webp
+    │       │   └── photo.avif
+    │       └── w1200/2026/03/
+    │           ├── photo.jpg
+    │           ├── photo.webp
+    │           └── photo.avif
+    ├── media/2026/03/
+    │   └── clip.mp4               ← uploaded as-is
+    └── files/2026/03/
+        └── doc.pdf                ← uploaded as-is
+```
+
+### `variantLayout: "top-level"` — predictable prefix for SSG / external tooling
+
+Useful when an SSG or external tool needs to compute variant URLs with a stable, easily globbable prefix. Since the key structure no longer matches Ghost's srcset convention, disable `imageOptimization.srcsets` to prevent Ghost from generating broken srcset URLs; handle responsive markup in your theme or SSG instead.
 
 ```
 my-bucket/
 ├── content/
-│   ├── images/
-│   │   └── 2026/03/
-│   │       ├── photo.jpg          ← original format, max width  (URL returned to Ghost)
-│   │       ├── photo.webp         ← additional format
-│   │       └── photo.avif         ← additional format
-│   ├── media/
-│   │   └── 2026/03/
-│   │       └── clip.mp4           ← uploaded as-is
-│   └── files/
-│       └── 2026/03/
-│           └── doc.pdf            ← uploaded as-is
+│   ├── images/2026/03/
+│   │   ├── photo.jpg
+│   │   ├── photo.webp
+│   │   └── photo.avif
+│   ├── media/2026/03/clip.mp4
+│   └── files/2026/03/doc.pdf
 └── size/
-    ├── w600/
-    │   └── content/images/2026/03/
-    │       ├── photo.jpg          ← resized 600w, original format
-    │       ├── photo.webp
-    │       └── photo.avif
-    └── w1200/
-        └── content/images/2026/03/
-            ├── photo.jpg
-            ├── photo.webp
-            └── photo.avif
+    ├── w600/content/images/2026/03/
+    │   ├── photo.jpg
+    │   ├── photo.webp
+    │   └── photo.avif
+    └── w1200/content/images/2026/03/
+        ├── photo.jpg
+        ├── photo.webp
+        └── photo.avif
 ```
-
-Resized variants are placed under a top-level `size/w{width}/` prefix, **outside** the configured `pathPrefix`. This makes it easy for a CDN/worker to rewrite responsive image requests to the appropriate variant.
 
 Media, files, and images with optimization disabled are uploaded as a single key without variants.
 
@@ -79,9 +103,18 @@ Minimal `config.production.json`:
       "accessKeyId": "your-access-key",
       "secretAccessKey": "your-secret-key",
       "bucket": "your-bucket",
-      "cdnUrl": "https://cdn.example.com"
+      "cdnUrl": "https://cdn.example.com",
+      "pathPrefix": "content/images"
+    },
+    "media": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/media"
+    },
+    "files": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/files"
     }
-  }
+}
 }
 ```
 
@@ -104,7 +137,8 @@ Full configuration with all options and per-type setup (images / media / files):
       "maxWidth": 1600,
       "sizes": [600, 1200],
       "formats": ["webp", "avif"],
-      "quality": { "webp": 80, "avif": 60, "jpeg": 85, "png": 85 }
+      "quality": { "webp": 80, "avif": 60, "jpeg": 85, "png": 85 },
+      "variantLayout": "ghost"
     },
     "media": {
       "adapter": "ghost-storage-s3-sharp",
@@ -124,7 +158,7 @@ Full configuration with all options and per-type setup (images / media / files):
 }
 ```
 
-Connection settings (`endpoint`, `accessKeyId`, etc.) defined under the adapter name (`ghost-storage-s3-sharp`) are shared by all three types — only per-type overrides like `pathPrefix` and `enableImageOptimization` need to be repeated. Setting `imageOptimization.resize/srcsets` to `false` disables Ghost's built-in image processing in favor of this adapter's Sharp pipeline.
+Connection settings (`endpoint`, `accessKeyId`, etc.) defined under the adapter name (`ghost-storage-s3-sharp`) are shared by all three types — only per-type overrides like `pathPrefix` and `enableImageOptimization` need to be repeated. Set `imageOptimization.resize` to `false` to disable Ghost's built-in resizing in favor of this adapter's Sharp pipeline. For `imageOptimization.srcsets`, see the [`variantLayout`](#variantghost-default--matches-ghosts-srcset-urls) guidance above.
 
 ### All options
 
@@ -137,12 +171,13 @@ Connection settings (`endpoint`, `accessKeyId`, etc.) defined under the adapter 
 | `endpoint` | — | Custom endpoint URL for S3-compatible services |
 | `region` | `us-east-1` | AWS region (or `auto` for Cloudflare R2) |
 | `checksumMode` | `when_supported` | `when_supported` (AWS S3, MinIO ≥ `RELEASE.2025-07-15`) or `when_required` (Cloudflare R2, older MinIO) |
-| `pathPrefix` | — | Key prefix to namespace files within the bucket |
-| `enableImageOptimization` | `true` | Enable Sharp image processing |
+| `pathPrefix` | — | Prepended to every object key in the bucket (e.g. `content/images` → `content/images/2026/03/photo.jpg`). If omitted, files are placed at the bucket root. Typically set per storage type to separate images, media, and files into distinct key namespaces. |
+| `enableImageOptimization` | `true` | Enable Sharp image processing. Only takes effect for processable formats (jpg, png, webp, tiff, bmp); media and file types (mp4, pdf, etc.) are always stored as-is regardless of this setting. |
 | `maxWidth` | `1600` | Maximum width for resized images |
 | `sizes` | `[600, 1200]` | Responsive image widths (or `"600,1200"` from env vars) |
-| `formats` | `["webp", "avif"]` | Additional formats to generate (or `"webp,avif"` / `""` from env vars) |
+| `formats` | `["webp", "avif"]` | Additional formats to generate (or `"webp,avif"` / `""` from env vars). Useful when your theme or SSG does not natively handle WebP/AVIF conversion. |
 | `quality` | `{webp:80, avif:60, jpeg:85, png:85}` | Quality per format (or `"webp:80,avif:60,..."` from env vars) |
+| `variantLayout` | `ghost` | Where to place resized variants. `ghost` (default) inserts `size/wN/` after `pathPrefix` to match Ghost's srcset URL convention. `top-level` puts `size/wN/` at the bucket root, which is useful when using SSGs that need a stable, predictable URL prefix or when customizing your theme. **Changing this setting only affects files uploaded after the change; existing files are not moved.** |
 
 ### Configuration via environment variables
 
@@ -171,7 +206,16 @@ See the [Docker Compose example](#docker-compose-example) below for a full setup
       "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
       "bucket": "my-ghost-bucket",
       "region": "ap-northeast-1",
-      "cdnUrl": "https://my-ghost-bucket.s3.ap-northeast-1.amazonaws.com"
+      "cdnUrl": "https://my-ghost-bucket.s3.ap-northeast-1.amazonaws.com",
+      "pathPrefix": "content/images"
+    },
+    "media": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/media"
+    },
+    "files": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/files"
     }
   }
 }
@@ -192,7 +236,16 @@ R2 does not support CRC32/CRC64-NVME checksums. Set `checksumMode: "when_require
       "bucket": "my-ghost-bucket",
       "region": "auto",
       "checksumMode": "when_required",
-      "cdnUrl": "https://cdn.example.com"
+      "cdnUrl": "https://cdn.example.com",
+      "pathPrefix": "content/images"
+    },
+    "media": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/media"
+    },
+    "files": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/files"
     }
   }
 }
@@ -212,7 +265,16 @@ MinIO `RELEASE.2025-07-15` and later support CRC32 checksums natively. For **old
       "secretAccessKey": "your-minio-secret-key",
       "bucket": "my-ghost-bucket",
       "region": "us-east-1",
-      "cdnUrl": "https://minio.example.com/my-ghost-bucket"
+      "cdnUrl": "https://minio.example.com/my-ghost-bucket",
+      "pathPrefix": "content/images"
+    },
+    "media": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/media"
+    },
+    "files": {
+      "adapter": "ghost-storage-s3-sharp",
+      "pathPrefix": "content/files"
     }
   }
 }
@@ -264,7 +326,9 @@ services:
       # ─── Disable Ghost's built-in image optimization ─────────────
       # (replaced by this adapter's Sharp pipeline)
       imageOptimization__resize: "false"
-      imageOptimization__srcsets: "false"
+      # srcsets: set to "false" when using variantLayout "top-level" (SSG/custom theme),
+      # or omit / set to "true" when using the default "ghost" layout so Ghost generates srcset markup.
+      imageOptimization__srcsets: "true"
 
       # ─── S3-compatible connection (shared by all three types) ────
       storage__ghost-storage-s3-sharp__endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
@@ -274,10 +338,11 @@ services:
       storage__ghost-storage-s3-sharp__region: auto
       storage__ghost-storage-s3-sharp__checksumMode: when_required  # R2/MinIO need this
       storage__ghost-storage-s3-sharp__cdnUrl: ${R2_CDN_URL}
+      storage__ghost-storage-s3-sharp__variantLayout: "ghost" # or top-level
 
       # ─── Images: optimized with Sharp ────────────────────────────
       storage__active: ghost-storage-s3-sharp
-      storage__ghost-storage-s3-sharp__pathPrefix: content/images
+      storage__ghost-storage-s3-sharp__pathPrefix: content/images  # key prefix inside the bucket for image files
       # Optional image tuning:
       # storage__ghost-storage-s3-sharp__maxWidth: "1600"
       # storage__ghost-storage-s3-sharp__sizes: "600,1200"
@@ -286,12 +351,12 @@ services:
       # ─── Media (audio/video): passthrough ────────────────────────
       storage__media__adapter: ghost-storage-s3-sharp
       storage__media__enableImageOptimization: "false"
-      storage__media__pathPrefix: content/media
+      storage__media__pathPrefix: content/media  # key prefix inside the bucket for media files
 
       # ─── Files (documents): passthrough ──────────────────────────
       storage__files__adapter: ghost-storage-s3-sharp
       storage__files__enableImageOptimization: "false"
-      storage__files__pathPrefix: content/files
+      storage__files__pathPrefix: content/files  # key prefix inside the bucket for document files
     volumes:
       - ghost-content:/var/lib/ghost/content
     depends_on:

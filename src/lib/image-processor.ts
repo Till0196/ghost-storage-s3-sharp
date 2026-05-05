@@ -44,27 +44,60 @@ export interface ImageVariant {
     contentType: string;
 }
 
+export type VariantLayout = 'ghost' | 'top-level';
+
 export interface ImageProcessorConfig {
     maxWidth: number;
     sizes: number[];
     formats: string[];
     quality: Record<string, number>;
+    layout: VariantLayout;
+}
+
+/**
+ * Build the storage key for a resized variant.
+ *
+ * - 'ghost' layout (default): inserts `size/wN/` after pathPrefix, matching
+ *   Ghost's built-in srcset URL convention (`/content/images/size/wN/.../photo.jpg`).
+ * - 'top-level' layout: places `size/wN/` at the top of the bucket, useful when
+ *   SSGs or custom themes need a stable, predictable key prefix.
+ */
+export function buildSizeVariantKey(
+    prefixedPath: string,
+    pathPrefix: string,
+    size: number,
+    format: string,
+    layout: VariantLayout
+): string {
+    const ext = path.extname(prefixedPath).slice(1).toLowerCase();
+    const basePath = prefixedPath.slice(0, prefixedPath.length - ext.length - 1);
+    const stem = path.posix.basename(basePath);
+    const sizeSegment = `size/w${size}`;
+
+    if (layout === 'ghost') {
+        const relativePath = pathPrefix && prefixedPath.startsWith(pathPrefix + '/')
+            ? prefixedPath.slice(pathPrefix.length + 1)
+            : prefixedPath;
+        const relativeDir = path.posix.dirname(relativePath);
+        return pathPrefix
+            ? path.posix.join(pathPrefix, sizeSegment, relativeDir, `${stem}.${format}`)
+            : path.posix.join(sizeSegment, relativeDir, `${stem}.${format}`);
+    }
+    // top-level
+    const dir = path.posix.dirname(prefixedPath);
+    return `${sizeSegment}/${dir}/${stem}.${format}`;
 }
 
 export async function generateVariants(
     inputBuffer: Buffer,
-    uniquePath: string,
+    prefixedPath: string,
+    pathPrefix: string,
     config: ImageProcessorConfig
 ): Promise<ImageVariant[]> {
-    const maxWidth = config.maxWidth;
-    const sizes = config.sizes;
-    const formats = config.formats;
-    const quality = config.quality;
+    const { maxWidth, sizes, formats, quality, layout } = config;
 
-    const ext = path.extname(uniquePath).slice(1).toLowerCase();
-    const basePath = uniquePath.slice(0, uniquePath.length - ext.length - 1);
-    const dir = path.posix.dirname(uniquePath);
-    const stem = path.posix.basename(basePath);
+    const ext = path.extname(prefixedPath).slice(1).toLowerCase();
+    const basePath = prefixedPath.slice(0, prefixedPath.length - ext.length - 1);
 
     const metadata = await sharp(inputBuffer).rotate().metadata();
     const originalWidth = metadata.width ?? maxWidth;
@@ -95,7 +128,7 @@ export async function generateVariants(
             const buffer = await img.toBuffer();
             return { key: variantKey, buffer, contentType: getContentType(format) };
         } catch (err: any) {
-            console.warn(`[ghost-storage-r2] Failed to generate variant ${variantKey}:`, err.message);
+            console.warn(`[ghost-storage-s3-sharp] Failed to generate variant ${variantKey}:`, err.message);
             return null;
         }
     };
@@ -103,9 +136,9 @@ export async function generateVariants(
     const originalFormat = ext === 'jpg' ? 'jpeg' : ext;
 
     // Base size: original format at max width
-    const baseVariant = await createVariant(maxWidth, originalFormat, uniquePath);
+    const baseVariant = await createVariant(maxWidth, originalFormat, prefixedPath);
     if (!baseVariant) {
-        throw new Error(`Failed to process base image: ${uniquePath}`);
+        throw new Error(`Failed to process base image: ${prefixedPath}`);
     }
     variants.push(baseVariant);
 
@@ -118,11 +151,11 @@ export async function generateVariants(
     const sizePromises: Promise<ImageVariant | null>[] = [];
     for (const size of sizes) {
         sizePromises.push(
-            createVariant(size, originalFormat, `size/w${size}/${dir}/${stem}.${ext}`)
+            createVariant(size, originalFormat, buildSizeVariantKey(prefixedPath, pathPrefix, size, ext, layout))
         );
         for (const format of formats) {
             sizePromises.push(
-                createVariant(size, format, `size/w${size}/${dir}/${stem}.${format}`)
+                createVariant(size, format, buildSizeVariantKey(prefixedPath, pathPrefix, size, format, layout))
             );
         }
     }

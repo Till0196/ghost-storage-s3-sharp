@@ -236,6 +236,7 @@ describe('S3Storage', () => {
             expect(mockGenerateVariants).toHaveBeenCalledWith(
                 expect.any(Buffer),
                 'content/images/2026/03/photo.jpg',
+                'content/images',
                 expect.any(Object)
             );
             expect(url).toBe('https://images.example.com/content/images/2026/03/photo.jpg');
