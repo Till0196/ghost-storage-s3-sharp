@@ -36,7 +36,7 @@ jobs:
           NODE_VERSION=$(docker run --rm ghost:6-alpine node --version | cut -dv -f2 | cut -d. -f1)
           echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
