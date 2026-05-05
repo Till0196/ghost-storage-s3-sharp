@@ -79,13 +79,24 @@ Media, files, and images with optimization disabled are uploaded as a single key
 
 ## Installation
 
-Copy the module into your Ghost installation:
+### Option 1 — Add to your own Dockerfile (recommended)
 
-```
-/var/lib/ghost/node_modules/ghost-storage-s3-sharp/
+Add one `RUN` line to any official Ghost image. The tarball is pre-built, so no build tools are required. `sharp`'s native binaries are downloaded automatically for the target platform (Alpine, Debian, arm64, etc.).
+
+```dockerfile
+FROM ghost:5-alpine   # any Ghost version / variant
+
+USER root
+RUN cd /var/lib/ghost && \
+    npm install https://github.com/Till0196/ghost-storage-s3-sharp/releases/download/v1.0.0/ghost-storage-s3-sharp-1.0.0.tgz && \
+    rm -rf /root/.npm
 ```
 
-Or use the provided Docker image which bundles it with Ghost:
+Check the [releases page](https://github.com/Till0196/ghost-storage-s3-sharp/releases) for the latest version URL.
+
+### Option 2 — Pre-built Docker image
+
+A ready-to-run image based on `ghost:6-alpine` is published on GHCR:
 
 ```
 ghcr.io/till0196/ghost-storage-s3-sharp:latest
