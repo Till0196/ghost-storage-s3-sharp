@@ -1,5 +1,5 @@
-name: build ghost-storage-r2 image
-run-name: build ghost-storage-r2 image - ${{ github.event_name }}
+name: build ghost-storage-s3-sharp image
+run-name: build ghost-storage-s3-sharp image - ${{ github.event_name }}
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghost-storage-r2
+  IMAGE_NAME: ghost-storage-s3-sharp
   TAG_NAME: latest
 
 jobs:

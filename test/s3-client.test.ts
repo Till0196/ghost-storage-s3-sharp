@@ -1,5 +1,5 @@
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { R2Client } from '../src/lib/r2-client';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3CompatibleClient } from '../src/lib/s3-client';
 
 jest.mock('@aws-sdk/client-s3', () => {
     const mockSend = jest.fn();
@@ -15,31 +15,54 @@ jest.mock('@aws-sdk/client-s3', () => {
 
 const { __mockSend: mockSend } = jest.requireMock('@aws-sdk/client-s3');
 
-describe('R2Client', () => {
-    let client: R2Client;
+describe('S3CompatibleClient', () => {
+    let client: S3CompatibleClient;
 
     beforeEach(() => {
         jest.clearAllMocks();
-        client = new R2Client({
-            accountId: 'test-account',
+        client = new S3CompatibleClient({
             accessKeyId: 'test-key',
             secretAccessKey: 'test-secret',
             bucket: 'test-bucket',
-            region: 'auto'
+            region: 'us-east-1'
         });
     });
 
-    test('constructor creates S3Client with correct endpoint and R2 checksum workaround', () => {
+    test('constructor creates S3Client with default WHEN_SUPPORTED checksum mode', () => {
         expect(S3Client).toHaveBeenCalledWith({
-            region: 'auto',
-            endpoint: 'https://test-account.r2.cloudflarestorage.com',
+            region: 'us-east-1',
             credentials: {
                 accessKeyId: 'test-key',
                 secretAccessKey: 'test-secret'
             },
+            requestChecksumCalculation: 'WHEN_SUPPORTED',
+            responseChecksumValidation: 'WHEN_SUPPORTED'
+        });
+    });
+
+    test('constructor sets custom endpoint when provided', () => {
+        new S3CompatibleClient({
+            endpoint: 'https://account-id.r2.cloudflarestorage.com',
+            accessKeyId: 'test-key',
+            secretAccessKey: 'test-secret',
+            bucket: 'test-bucket'
+        });
+        expect(S3Client).toHaveBeenCalledWith(expect.objectContaining({
+            endpoint: 'https://account-id.r2.cloudflarestorage.com'
+        }));
+    });
+
+    test('constructor sets WHEN_REQUIRED checksum mode for R2/MinIO compatibility', () => {
+        new S3CompatibleClient({
+            accessKeyId: 'test-key',
+            secretAccessKey: 'test-secret',
+            bucket: 'test-bucket',
+            checksumMode: 'when_required'
+        });
+        expect(S3Client).toHaveBeenCalledWith(expect.objectContaining({
             requestChecksumCalculation: 'WHEN_REQUIRED',
             responseChecksumValidation: 'WHEN_REQUIRED'
-        });
+        }));
     });
 
     describe('upload', () => {
