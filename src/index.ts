@@ -132,7 +132,14 @@ class S3Storage extends StorageBase {
         return this.enableImageOptimization && PROCESSABLE_FORMATS.includes(ext);
     }
 
+    private assertSafeRelativePath(relativePath: string): void {
+        if (relativePath.split('/').includes('..')) {
+            throw new Error(`Invalid path (path traversal attempt): ${relativePath}`);
+        }
+    }
+
     private prefixKey(relativePath: string): string {
+        this.assertSafeRelativePath(relativePath);
         return this.pathPrefix
             ? path.posix.join(this.pathPrefix, relativePath)
             : relativePath;
@@ -143,6 +150,8 @@ class S3Storage extends StorageBase {
     }
 
     async save(file: StorageFile, targetDir?: string): Promise<string> {
+        this.assertSafeRelativePath(file.name);
+        if (targetDir) this.assertSafeRelativePath(targetDir);
         const dir = targetDir ?? this.getTargetDir();
         const uniquePath: string = await this.getUniqueFileName(file, dir);
         const prefixedPath = this.prefixKey(uniquePath);
@@ -180,6 +189,7 @@ class S3Storage extends StorageBase {
     }
 
     async saveRaw(buffer: Buffer, targetPath: string): Promise<string> {
+        this.assertSafeRelativePath(targetPath);
         const prefixedPath = this.prefixKey(targetPath);
         const ext = path.extname(targetPath).slice(1).toLowerCase();
         const contentType = getContentType(ext);
@@ -188,11 +198,15 @@ class S3Storage extends StorageBase {
     }
 
     async exists(fileName: string, targetDir?: string): Promise<boolean> {
+        this.assertSafeRelativePath(fileName);
+        if (targetDir) this.assertSafeRelativePath(targetDir);
         const relativePath = targetDir ? path.posix.join(targetDir, fileName) : fileName;
         return this.client.exists(this.prefixKey(relativePath));
     }
 
     async delete(fileName: string, targetDir?: string): Promise<void> {
+        this.assertSafeRelativePath(fileName);
+        if (targetDir) this.assertSafeRelativePath(targetDir);
         const relativePath = targetDir ? path.posix.join(targetDir, fileName) : fileName;
         const prefixedPath = this.prefixKey(relativePath);
         const ext = path.extname(prefixedPath).slice(1).toLowerCase();
@@ -227,22 +241,30 @@ class S3Storage extends StorageBase {
     serve(): RequestHandler {
         return (req: Request, res: Response, _next: NextFunction) => {
             const relativePath = req.path.replace(/^\//, '');
-            const prefixedPath = this.prefixKey(relativePath);
-            res.redirect(301, this.buildUrl(prefixedPath));
+            try {
+                const prefixedPath = this.prefixKey(relativePath);
+                res.redirect(301, this.buildUrl(prefixedPath));
+            } catch {
+                res.status(400).end();
+            }
         };
     }
 
     urlToPath(url: string): string {
+        let key: string;
         // Strip CDN URL prefix
         if (url.startsWith(this.cdnUrl)) {
-            return url.slice(this.cdnUrl.length).replace(/^\//, '');
+            key = url.slice(this.cdnUrl.length).replace(/^\//, '');
+        } else {
+            // Strip any Ghost content path prefix (/content/images/, /content/media/, /content/files/)
+            const contentMatch = url.match(/\/content\/(?:images|media|files)\/(.*)/);
+            if (contentMatch) {
+                return this.prefixKey(contentMatch[1]);
+            }
+            key = url.replace(/^\//, '');
         }
-        // Strip any Ghost content path prefix (/content/images/, /content/media/, /content/files/)
-        const contentMatch = url.match(/\/content\/(?:images|media|files)\/(.*)/);
-        if (contentMatch) {
-            return this.prefixKey(contentMatch[1]);
-        }
-        return url.replace(/^\//, '');
+        this.assertSafeRelativePath(key);
+        return key;
     }
 }
 

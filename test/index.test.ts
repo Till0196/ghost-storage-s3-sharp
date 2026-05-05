@@ -383,6 +383,37 @@ describe('S3Storage', () => {
         });
     });
 
+    describe('path traversal protection', () => {
+        test('exists rejects fileName with .. segment', async () => {
+            await expect(adapter.exists('../secret', '2026/03'))
+                .rejects.toThrow('path traversal');
+        });
+
+        test('delete rejects targetDir with .. segment', async () => {
+            await expect(adapter.delete('photo.jpg', '../../other'))
+                .rejects.toThrow('path traversal');
+        });
+
+        test('read rejects URL with .. segment', async () => {
+            await expect(adapter.read('https://images.example.com/../secret'))
+                .rejects.toThrow('path traversal');
+        });
+
+        test('serve responds 400 on .. segment', () => {
+            const middleware = adapter.serve();
+            const req = { path: '/../secret' } as any;
+            const res = { redirect: jest.fn(), status: jest.fn().mockReturnThis(), end: jest.fn() } as any;
+            middleware(req, res, jest.fn());
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.redirect).not.toHaveBeenCalled();
+        });
+
+        test('allows normal paths with dots in filename', async () => {
+            mockClient.exists.mockResolvedValue(true);
+            await expect(adapter.exists('photo.test.jpg', '2026/03')).resolves.toBe(true);
+        });
+    });
+
     describe('urlToPath', () => {
         test('strips CDN URL prefix', () => {
             expect(adapter.urlToPath('https://images.example.com/2026/03/photo.jpg'))
