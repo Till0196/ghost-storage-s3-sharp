@@ -14,8 +14,11 @@ function resolveStr(configVal: string | undefined, envKey: string): string | und
     return configVal ?? (env[envKey] || undefined);
 }
 
-function resolveBool(configVal: boolean | undefined, envKey: string, defaultVal: boolean): boolean {
-    if (configVal !== undefined) return configVal;
+function resolveBool(configVal: boolean | string | undefined, envKey: string, defaultVal: boolean): boolean {
+    if (configVal !== undefined) {
+        if (typeof configVal === 'boolean') return configVal;
+        return configVal.toLowerCase() !== 'false' && configVal !== '0';
+    }
     const v = env[envKey];
     if (v === undefined) return defaultVal;
     return v.toLowerCase() !== 'false' && v !== '0';
@@ -77,7 +80,7 @@ interface S3StorageConfig {
     // S3 key prefix to segregate images/media/files within the same bucket
     pathPrefix?: string;
     // Image optimization (only applies to processable image formats)
-    enableImageOptimization?: boolean;
+    enableImageOptimization?: boolean | string;
     maxWidth?: number;
     sizes?: number[];
     // Additional formats to generate (e.g. ['webp', 'avif']). Set [] to disable.

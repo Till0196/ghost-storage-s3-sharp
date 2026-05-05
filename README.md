@@ -129,6 +129,45 @@ R2 does not support CRC32/CRC64-NVME checksums. Set `checksumMode: "when_require
 }
 ```
 
+## Docker Compose example
+
+Ghost natively maps `storage__<adapter>__<key>` environment variables to config, so no custom env var prefix is needed.
+
+```yaml
+services:
+  ghost:
+    build: .  # or image: ghcr.io/till0196/ghost-storage-s3-sharp:latest
+    environment:
+      # Ghost config
+      url: https://example.com
+      database__client: mysql
+      database__connection__host: db
+      database__connection__user: root
+      database__connection__password: example
+      database__connection__database: ghost
+      # Disable Ghost's built-in image optimization (handled by this adapter)
+      imageOptimization__resize: "false"
+      imageOptimization__srcsets: "false"
+      # Storage adapter — shared connection config
+      storage__ghost-storage-s3-sharp__endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+      storage__ghost-storage-s3-sharp__accessKeyId: ${R2_ACCESS_KEY_ID}
+      storage__ghost-storage-s3-sharp__secretAccessKey: ${R2_SECRET_ACCESS_KEY}
+      storage__ghost-storage-s3-sharp__bucket: ${R2_BUCKET}
+      storage__ghost-storage-s3-sharp__region: auto
+      storage__ghost-storage-s3-sharp__checksumMode: when_required
+      storage__ghost-storage-s3-sharp__cdnUrl: ${R2_CDN_URL}
+      # Images: with Sharp optimization
+      storage__active: ghost-storage-s3-sharp
+      # Media (audio/video): passthrough, no optimization
+      storage__media__adapter: ghost-storage-s3-sharp
+      storage__media__enableImageOptimization: "false"
+      storage__media__pathPrefix: content/media
+      # Files (documents): passthrough, no optimization
+      storage__files__adapter: ghost-storage-s3-sharp
+      storage__files__enableImageOptimization: "false"
+      storage__files__pathPrefix: content/files
+```
+
 ## Image optimization
 
 When `enableImageOptimization` is enabled (default), uploaded images are processed by Sharp:

@@ -70,6 +70,11 @@ describe('S3Storage', () => {
             expect((adapter as any).enableImageOptimization).toBe(true);
         });
 
+        test('accepts string "false" for enableImageOptimization (Ghost env var convention)', () => {
+            const a = new S3Storage({ ...baseConfig, enableImageOptimization: 'false' as any });
+            expect((a as any).enableImageOptimization).toBe(false);
+        });
+
         test('defaults pathPrefix to empty string', () => {
             expect((adapter as any).pathPrefix).toBe('');
         });
