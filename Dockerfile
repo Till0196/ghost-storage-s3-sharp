@@ -1,7 +1,7 @@
-FROM node:22-alpine AS builder
+FROM ghost:6-alpine AS builder
 WORKDIR /build
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN NODE_ENV=development npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
