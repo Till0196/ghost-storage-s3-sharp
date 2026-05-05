@@ -16,12 +16,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'src/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig.json'
-      - 'Dockerfile'
 
 permissions:
   contents: read
@@ -37,9 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get Node version from Ghost image
+        run: |
+          NODE_VERSION=$(docker run --rm ghost:6-alpine node --version | cut -dv -f2 | cut -d. -f1)
+          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
 
       - run: npm ci
 
