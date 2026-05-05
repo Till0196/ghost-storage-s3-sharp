@@ -1,0 +1,8 @@
+.github/
+src/
+test/
+Dockerfile
+jest.config.js
+renovate.json
+tsconfig.json
+*.tgz
