@@ -16,7 +16,7 @@ jobs:
     outputs:
       updated: ${{ steps.check.outputs.updated }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Get current Ghost base image digest
         id: digest
