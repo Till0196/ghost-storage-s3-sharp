@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1017.0",
-    "ghost-storage-base": "^1.1.2",
+    "ghost-storage-base": "^2.0.0",
     "sharp": "^0.35.0"
   },
   "devDependencies": {
