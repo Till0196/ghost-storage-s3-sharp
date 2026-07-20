@@ -21,7 +21,7 @@ jobs:
           NODE_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/docker-library/ghost/master/${GHOST_MAJOR}/${ALPINE_DIR}/Dockerfile" | grep "^FROM node:" | sed 's/FROM node:\([0-9]*\).*/\1/')
           echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
